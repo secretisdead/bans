@@ -122,6 +122,8 @@ class Bans:
 			creation_time=ban.creation_time.timestamp(),
 			expiration_time=ban.expiration_time.timestamp(),
 			created_by_uuid=ban.created_by_uuid,
+			reason=ban.reason,
+			note=ban.note,
 		)
 		return ban
 
