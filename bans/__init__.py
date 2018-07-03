@@ -299,6 +299,10 @@ class Bans:
 		)
 
 	def check_ban(self, scope='', remote_origin='', user_uuid=None):
+		expiration_conditions = [
+			self.bans.c.expiration_time == 0,
+			self.bans.c.expiration_time > time.time()
+		]
 		scope_conditions = [
 			self.bans.c.scope == 'global',
 		]
@@ -319,6 +323,7 @@ class Bans:
 
 		statement = self.bans.select().where(
 			and_(
+				or_(*expiration_conditions),
 				or_(*scope_conditions),
 				or_(*conditions)
 			)
