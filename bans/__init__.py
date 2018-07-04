@@ -300,11 +300,6 @@ class Bans:
 	def bans_dictionary(self, list):
 		return list_to_item_uuid_dictionary(list)
 
-	def remove_ban(self, ban):
-		self.connection.execute(
-			self.bans.delete().where(self.bans.c.uuid == ban.uuid)
-		)
-
 	def prune_bans(self, cutoff_time):
 		self.connection.execute(
 			self.bans.delete().where(
