@@ -62,14 +62,6 @@ def list_to_item_uuid_dictionary(list):
 		dict[item.uuid] = item
 	return dict
 
-def list_to_users_item_uuid_dictionary(list, attr):
-	dict = {}
-	for item in list:
-		if not item.user.uuid in dict:
-			dict[item.user.uuid] = {}
-		dict[item.user.uuid][getattr(item, attr)] = item
-	return dict
-
 class Bans:
 	def __init__(self, engine):
 		self.engine = engine
