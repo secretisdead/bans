@@ -219,8 +219,20 @@ class Bans:
 				except ValueError:
 					continue
 			conditions.append(and_(*block_conditions))
-		#TODO reason like search
-		#TODO note like search
+		if 'reasons' in filter:
+			if list is not type(filter['reasons']):
+				filter['reasons'] = [filter['reasons']]
+			block_conditions = []
+			for reason in filter['reasons']:
+				block_conditions.append(or_(self.bans.c.reason.like(reason, escape='\\')))
+			conditions.append(and_(*block_conditions))
+		if 'notes' in filter:
+			if list is not type(filter['notes']):
+				filter['notes'] = [filter['notes']]
+			block_conditions = []
+			for note in filter['notes']:
+				block_conditions.append(or_(self.bans.c.note.like(note, escape='\\')))
+			conditions.append(and_(*block_conditions))
 		return conditions
 
 	def count_bans(self, filter={}):
