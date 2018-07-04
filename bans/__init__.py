@@ -176,7 +176,13 @@ class Bans:
 				filter['remote_origins'] = [filter['remote_origins']]
 			block_conditions = []
 			for remote_origin in filter['remote_origins']:
-				block_conditions.append(or_(self.bans.c.remote_origin == ip_address(remote_origin).packed))
+				try:
+					remote_origin = ip_address(str(remote_origin))
+				except ValueError:
+					conditions.append(False)
+					break
+				else:
+					block_conditions.append(or_(self.bans.c.remote_origin == remote_origin.packed))
 			conditions.append(and_(*block_conditions))
 		if 'scopes' in filter:
 			if list is not type(filter['scopes']):
