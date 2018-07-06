@@ -109,6 +109,7 @@ class Bans:
 		self.connection.execute(
 			self.bans.insert(),
 			uuid=ban.uuid,
+			scope=ban.scope,
 			remote_origin=ban.remote_origin.packed,
 			user_uuid=ban.user_uuid,
 			creation_time=int(ban.creation_time.timestamp()),
