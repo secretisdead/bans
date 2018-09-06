@@ -4,68 +4,84 @@ import re
 from ipaddress import ip_address
 from datetime import datetime, timezone
 
-from sqlalchemy import Table, Column, PrimaryKeyConstraint, Binary, Boolean, Integer, String, MetaData, ForeignKey
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.sql import select, func, and_, or_
-from sqlalchemy.sql.expression import cast
+from sqlalchemy import Table, Column, PrimaryKeyConstraint, LargeBinary
+from sqlalchemy import Integer, String, MetaData, ForeignKey
+from sqlalchemy.sql import func, and_, or_
 
-from sqlalchemy_uuid import UUID
+from statement_helper import sort_statement, paginate_statement, id_filter
+from statement_helper import time_filter, string_equal_filter
+from statement_helper import string_like_filter, bitwise_filter
+from base64_url import base64_url_encode, base64_url_decode
+from idcollection import IDCollection
+from parse_id import parse_id
+
+def get_id_bytes(id):
+	if isinstance(id, bytes):
+		return id
+	return base64_url_decode(id)
+
+def generate_or_parse_id(id):
+	if not id:
+		id_bytes = uuid.uuid4().bytes
+		id = base64_url_encode(id_bytes)
+	else:
+		id, id_bytes = parse_id(id)
+	return (id, id_bytes)
 
 class Ban:
 	def __init__(
 			self,
-			ban_uuid,
-			remote_origin,
-			scope='global',
-			user_uuid=uuid.UUID('00000000-0000-0000-0000-000000000000'),
-			creation_time=0,
-			expiration_time=0,
-			view_time=0,
-			created_by_uuid=uuid.UUID('00000000-0000-0000-0000-000000000000'),
+			id=None,
+			creation_time=None,
+			remote_origin='192.0.2.0',
+			scope='',
 			reason='',
 			note='',
+			expiration_time=0,
+			view_time=0,
+			created_by_user_id='',
+			user_id='',
 		):
+		self.id, self.id_bytes = generate_or_parse_id(id)
 
-		self.uuid = ban_uuid
+		if None == creation_time:
+			creation_time = time.time()
+		self.creation_time = int(creation_time)
+		self.creation_datetime = datetime.fromtimestamp(
+			self.creation_time,
+			timezone.utc,
+		)
+
 		self.remote_origin = ip_address(remote_origin)
 
-		if not scope:
-			scope = 'global'
 		self.scope = scope
-
-		if isinstance(user_uuid, str):
-			user_uuid = uuid.UUID(user_uuid)
-		elif isinstance(user_uuid, bytes):
-			user_uuid = uuid.UUID(bytes=user_uuid)
-		elif not isinstance(user_uuid, uuid.UUID):
-			raise TypeError('User uuid must be UUID (received ' + str(type(user_uuid)) + ')')
-		self.user_uuid = user_uuid
-
-		self.creation_time = datetime.fromtimestamp(creation_time, timezone.utc)
-		self.expiration_time = datetime.fromtimestamp(expiration_time, timezone.utc)
-		self.view_time = datetime.fromtimestamp(view_time, timezone.utc)
-
-		if isinstance(created_by_uuid, str):
-			created_by_uuid = uuid.UUID(created_by_uuid)
-		elif isinstance(created_by_uuid, bytes):
-			created_by_uuid = uuid.UUID(bytes=created_by_uuid)
-		elif not isinstance(created_by_uuid, uuid.UUID):
-			raise TypeError('Created by uuid must be UUID (received ' + str(type(created_by_uuid)) + ')')
-		self.created_by_uuid = created_by_uuid
 
 		self.reason = reason
 		self.note = note
 
-def list_to_item_uuid_dictionary(list):
-	dict = {}
-	for item in list:
-		dict[item.uuid] = item
-	return dict
+		self.expiration_time = int(expiration_time)
+		self.expiration_datetime = datetime.fromtimestamp(
+			self.expiration_time,
+			timezone.utc,
+		)
+
+		self.view_time = int(view_time)
+		self.view_datetime = datetime.fromtimestamp(
+			self.view_time,
+			timezone.utc,
+		)
+
+		self.created_by_user_id, self.created_by_user_id_bytes = parse_id(created_by_user_id)
+		self.created_by_user = None
+
+		self.user_id, self.user_id_bytes = parse_id(user_id)
+		self.user = None
 
 class Bans:
-	def __init__(self, engine):
+	def __init__(self, engine, db_prefix='', install=False):
 		self.engine = engine
-		self.engine_session = sessionmaker(bind=self.engine)()
+
+		self.db_prefix = db_prefix
 
 		self.scope_length = 16
 		self.reason_length = 64
@@ -73,97 +89,60 @@ class Bans:
 
 		metadata = MetaData()
 
-		default_uuid = uuid.UUID('00000000-0000-0000-0000-000000000000')
+		default_bytes = 0b0 * 16
 		default_origin = ip_address(0b0 * 16)
 
 		# bans tables
-		self.bans = Table('bans', metadata,
-			Column('uuid', UUID, primary_key=True, default=default_uuid),
-			Column('scope', String(self.scope_length), default=''),
-			Column('remote_origin', Binary(16), default=default_origin),
-			Column('user_uuid', UUID, default=default_uuid),
+		self.bans = Table(
+			self.db_prefix + 'bans',
+			metadata,
+			Column(
+				'id',
+				LargeBinary(16),
+				primary_key=True,
+				default=default_bytes,
+			),
 			Column('creation_time', Integer, default=0),
-			Column('expiration_time', Integer, default=0),
-			Column('view_time', Integer, default=0),
-			Column('created_by_uuid', UUID, default=default_uuid),
+			Column(
+				'remote_origin',
+				LargeBinary(16),
+				default=ip_address(default_bytes).packed,
+			),
+			Column('scope', String(self.scope_length), default=''),
 			Column('reason', String(self.reason_length), default=''),
 			Column('note', String(self.note_length), default=''),
+			Column('expiration_time', Integer, default=0),
+			Column('view_time', Integer, default=0),
+			Column('user_id', LargeBinary(16),default=default_bytes),
+			Column(
+				'created_by_user_id',
+				LargeBinary(16),
+				default=default_bytes,
+			),
 		)
-
-		table_exists = self.engine.dialect.has_table(self.engine, 'bans')
 
 		self.connection = self.engine.connect()
 
-		if not table_exists:
-			metadata.create_all(self.engine)
+		if install:
+			table_exists = self.engine.dialect.has_table(
+				self.engine,
+				self.db_prefix + 'bans'
+			)
+			if not table_exists:
+				metadata.create_all(self.engine)
 
-	# bans
-	def create_ban(self, remote_origin, ban_uuid=None, **kwargs):
-		if not ban_uuid:
-			ban_uuid = uuid.uuid4()
-		if 'creation_time' not in kwargs:
-			kwargs['creation_time'] = time.time()
+	def uninstall(self):
+		self.bans.drop(self.engine)
 
-		ban = Ban(ban_uuid, remote_origin, **kwargs)
+	# retrieve bans
+	def get_ban(self, id):
+		bans = self.search_bans(filter={'ids': id})
+		return bans.get(id)
 
-		self.connection.execute(
-			self.bans.insert(),
-			uuid=ban.uuid,
-			scope=ban.scope,
-			remote_origin=ban.remote_origin.packed,
-			user_uuid=ban.user_uuid,
-			creation_time=int(ban.creation_time.timestamp()),
-			expiration_time=int(ban.expiration_time.timestamp()),
-			created_by_uuid=ban.created_by_uuid,
-			reason=ban.reason,
-			note=ban.note,
-		)
-		return ban
-
-	def remove_ban(self, ban):
-		self.connection.execute(
-			self.bans.delete().where(self.bans.c.uuid == ban.uuid)
-		)
-
-	def update_ban(self, ban, **kwargs):
-		updates = {}
-		if 'scope' in kwargs:
-			updates['scope'] = str(kwargs['scope'])
-		if 'remote_origin' in kwargs:
-			#TODO type checking here
-			updates['remote_origin'] = ip_address(str(kwargs['remote_origin'])).packed
-		if 'user_uuid' in kwargs:
-			#TODO typechecking here
-			updates['user_uuid'] = kwargs['user_uuid']
-		if 'expiration_time' in kwargs:
-			updates['expiration_time'] = int(kwargs['expiration_time'])
-		if 'view_time' in kwargs:
-			updates['view_time'] = int(kwargs['view_time'])
-		if 'reason' in kwargs:
-			updates['reason'] = str(kwargs['reason'])
-		if 'note' in kwargs:
-			updates['note'] = str(kwargs['note'])
-		if 0 == len(updates):
-			return
-		self.connection.execute(
-			self.bans.update().values(**updates).where(self.bans.c.uuid == ban.uuid)
-		)
-
-	def get_ban(self, ban_uuid):
-		bans = self.search_bans(filter={'uuids': ban_uuid})
-		if 1 != len(bans) or getattr(bans[0], 'uuid') != ban_uuid:
-			return None
-		return bans[0]
-
-	def prepare_bans_search_conditions(self, filter):
+	def prepare_bans_search_statement(self, filter):
 		conditions = []
-		if 'uuids' in filter:
-			if list is not type(filter['uuids']):
-				filter['uuids'] = [filter['uuids']]
-			block_conditions = []
-			for ban_uuid in filter['uuids']:
-				block_conditions.append(self.bans.c.uuid == ban_uuid)
-			conditions.append(or_(*block_conditions))
+		conditions += id_filter(filter, 'ids', self.bans.c.id)
+		conditions += time_filter(filter, 'created', self.bans.c.creation_time)
 		if 'remote_origins' in filter:
 			if list is not type(filter['remote_origins']):
 				filter['remote_origins'] = [filter['remote_origins']]
@@ -171,161 +150,107 @@ class Bans:
 			for remote_origin in filter['remote_origins']:
 				try:
 					remote_origin = ip_address(str(remote_origin))
-				except ValueError:
-					conditions.append(False)
-					break
+				except:
+					pass
 				else:
-					block_conditions.append(or_(self.bans.c.remote_origin == remote_origin.packed))
-			conditions.append(and_(*block_conditions))
-		if 'scopes' in filter:
-			if list is not type(filter['scopes']):
-				filter['scopes'] = [filter['scopes']]
-			block_conditions = []
-			for scope in filter['scopes']:
-				block_conditions.append(or_(self.bans.c.scope == str(scope)))
-			conditions.append(and_(*block_conditions))
-		if 'user_uuids' in filter:
-			if list is not type(filter['user_uuids']):
-				filter['user_uuids'] = [filter['user_uuids']]
-			block_conditions = []
-			for user_uuid in filter['user_uuids']:
-				try:
-					block_conditions.append(or_(self.bans.c.user_uuid == user_uuid))
-				except ValueError:
-					continue
-			conditions.append(and_(*block_conditions))
-		if 'created_after' in filter:
-			conditions.append(self.bans.c.creation_time > int(filter['created_after']))
-		if 'created_before' in filter:
-			conditions.append(self.bans.c.creation_time <= int(filter['created_before']))
-		if 'expires_after' in filter:
-			conditions.append(self.bans.c.expiration_time > int(filter['expires_after']))
-		if 'expires_before' in filter:
-			conditions.append(self.bans.c.expiration_time != 0)
-			conditions.append(self.bans.c.expiration_time <= int(filter['expires_before']))
-		if 'viewed_after' in filter:
-			conditions.append(self.bans.c.view_time > int(filter['viewed_after']))
-		if 'viewed_before' in filter:
-			conditions.append(self.bans.c.view_time != 0)
-			conditions.append(self.bans.c.view_time <= int(filter['viewed_before']))
-		if 'created_by_uuids' in filter:
-			if list is not type(filter['created_by_uuids']):
-				filter['created_by_uuids'] = [filter['created_by_uuids']]
-			block_conditions = []
-			for created_by_uuid in filter['created_by_uuids']:
-				try:
-					block_conditions.append(or_(self.bans.c.created_by_uuid == created_by_uuid))
-				except ValueError:
-					continue
-			conditions.append(and_(*block_conditions))
-		if 'reasons' in filter:
-			if list is not type(filter['reasons']):
-				filter['reasons'] = [filter['reasons']]
-			block_conditions = []
-			for reason in filter['reasons']:
-				block_conditions.append(or_(self.bans.c.reason.like(reason, escape='\\')))
-			conditions.append(and_(*block_conditions))
-		if 'notes' in filter:
-			if list is not type(filter['notes']):
-				filter['notes'] = [filter['notes']]
-			block_conditions = []
-			for note in filter['notes']:
-				block_conditions.append(or_(self.bans.c.note.like(note, escape='\\')))
-			conditions.append(and_(*block_conditions))
-		return conditions
+					block_conditions.append(
+						self.bans.c.remote_origin == remote_origin.packed
+					)
+			if block_conditions:
+				conditions.append(or_(*block_conditions))
+			else:
+				conditions.append(False)
+		conditions += string_equal_filter(filter, 'scopes', self.bans.c.scope)
+		conditions += string_like_filter(filter, 'reasons', self.bans.c.reason)
+		conditions += string_like_filter(filter, 'notes', self.bans.c.note)
+		conditions += time_filter(filter, 'expired', self.bans.c.expiration_time)
+		conditions += time_filter(filter, 'viewed', self.bans.c.view_time)
+		conditions += id_filter(
+			filter,
+			'created_by_user_ids',
+			self.bans.c.created_by_user_id,
+		)
+		conditions += id_filter(filter, 'user_ids', self.bans.c.user_id)
+
+		statement = self.bans.select()
+		if conditions:
+			statement = statement.where(and_(*conditions))
+		return statement
 
 	def count_bans(self, filter={}):
-		conditions = self.prepare_bans_search_conditions(filter)
-		if 0 == len(conditions):
-			statement = self.bans.select().count()
-		else:
-			statement = self.bans.select().where(and_(*conditions)).count()
+		statement = self.prepare_bans_search_statement(filter)
+		statement = statement.with_only_columns([func.count(self.bans.c.id)])
+		return self.connection.execute(statement).fetchone()[0]
 
-		return self.connection.execute(statement).fetchall()[0][0]
+	def search_bans(
+			self,
+			filter={},
+			sort='',
+			order='',
+			page=0,
+			perpage=None,
+		):
+		statement = self.prepare_bans_search_statement(filter)
 
-	def search_bans(self, filter={}, sort='creation_time', order='desc', page=0, perpage=None):
-		conditions = self.prepare_bans_search_conditions(filter)
-		if 0 == len(conditions):
-			statement = self.bans.select()
-		else:
-			statement = self.bans.select().where(and_(*conditions))
-
-		try:
-			sort_column = getattr(self.bans.c, sort)
-		except:
-			sort_column = self.bans.c.creation_time
-
-		if 'desc' != order:
-			order = 'asc'
-
-		column_order = getattr(sort_column, order)
-		statement = statement.order_by(column_order())
-		# always secondary sort by uuid
-		statement = statement.order_by(getattr(self.bans.c.uuid, order)())
-
-		if 0 < page:
-			statement = statement.offset(page * perpage)
-		if perpage:
-			statement = statement.limit(perpage)
+		statement = sort_statement(
+			statement,
+			self.bans,
+			sort,
+			order,
+			'creation_time',
+			True,
+			[
+				'creation_time',
+				'id',
+			],
+		)
+		statement = paginate_statement(statement, page, perpage)
 
 		result = self.connection.execute(statement).fetchall()
 		if 0 == len(result):
-			return []
+			return IDCollection()
 
-		bans = []
+		bans = IDCollection()
 		for row in result:
 			ban = Ban(
-				row[self.bans.c.uuid],
-				row[self.bans.c.remote_origin],
-				scope=row[self.bans.c.scope],
-				user_uuid=row[self.bans.c.user_uuid],
+				id=row[self.bans.c.id],
 				creation_time=row[self.bans.c.creation_time],
+				remote_origin=row[self.bans.c.remote_origin],
+				scope=row[self.bans.c.scope],
+				reason=row[self.bans.c.reason],
+				note=row[self.bans.c.note],
 				expiration_time=row[self.bans.c.expiration_time],
 				view_time=row[self.bans.c.view_time],
-				created_by_uuid=row[self.bans.c.created_by_uuid],
-				reason=row[self.bans.c.reason],
-				note=row[self.bans.c.note]
+				created_by_user_id=row[self.bans.c.created_by_user_id],
+				user_id=row[self.bans.c.user_id],
 			)
 
-			bans.append(ban)
+			bans.add(ban)
 		return bans
 
-	def bans_dictionary(self, list):
-		return list_to_item_uuid_dictionary(list)
-
-	def prune_bans(self, cutoff_time):
-		self.connection.execute(
-			self.bans.delete().where(
-				and_(
-					self.bans.c.expiration_time < cutoff_time,
-					self.bans.c.expiration_time > 0
-					#TODO don't prune unviewed bans?
-				)
-			)
-		)
-
-	def check_ban(self, scope='', remote_origin='', user_uuid=None):
+	def check_ban(self, scope='', remote_origin='', user_id=None):
 		expiration_conditions = [
 			self.bans.c.expiration_time == 0,
 			self.bans.c.expiration_time > time.time()
 		]
 		scope_conditions = [
-			self.bans.c.scope == 'global',
+			self.bans.c.scope == '',
 		]
-		if scope and 'global' != scope:
+		if scope:
 			scope_conditions.append(self.bans.c.scope == scope)
 
 		conditions = []
 		if remote_origin:
-			#TODO type checking
-			conditions.append(self.bans.c.remote_origin == ip_address(str(remote_origin)).packed)
+			conditions.append(
+				self.bans.c.remote_origin == ip_address(str(remote_origin)).packed,
+			)
 
-		if user_uuid:
-			#TODO type checking
-			conditions.append(self.bans.c.user_uuid == user_uuid)
+		if user_id:
+			user_id_bytes = get_id_bytes(user_id)
+			conditions.append(self.bans.c.user_id == user_id_bytes)
 
 		if not conditions:
-			raise ValueError('Neither remote origin or user uuid provided')
+			raise ValueError('Neither remote origin or user id provided')
 
 		statement = self.bans.select().where(
 			and_(
@@ -338,17 +263,125 @@ class Bans:
 		if not row:
 			return None
 
-		ban = Ban(
-			row[self.bans.c.uuid],
-			row[self.bans.c.remote_origin],
-			scope=row[self.bans.c.scope],
-			user_uuid=row[self.bans.c.user_uuid],
+		return Ban(
+			id=row[self.bans.c.id],
 			creation_time=row[self.bans.c.creation_time],
+			remote_origin=row[self.bans.c.remote_origin],
+			scope=row[self.bans.c.scope],
+			reason=row[self.bans.c.reason],
+			note=row[self.bans.c.note],
 			expiration_time=row[self.bans.c.expiration_time],
 			view_time=row[self.bans.c.view_time],
-			created_by_uuid=row[self.bans.c.created_by_uuid],
-			reason=row[self.bans.c.reason],
-			note=row[self.bans.c.note]
+			created_by_user_id=row[self.bans.c.created_by_user_id],
+			user_id=row[self.bans.c.user_id],
 		)
 
+	# manipulate bans
+	def create_ban(self, **kwargs):
+		ban = Ban(**kwargs)
+		# preflight check for existing id
+		if self.get_ban(id=ban.id_bytes):
+			raise ValueError('Ban ID collision')
+		self.connection.execute(
+			self.bans.insert(),
+			id=ban.id_bytes,
+			creation_time=int(ban.creation_time),
+			remote_origin=ban.remote_origin.packed,
+			scope=str(ban.scope),
+			reason=str(ban.reason),
+			note=str(ban.note),
+			expiration_time=int(ban.expiration_time),
+			view_time=int(ban.view_time),
+			created_by_user_id=ban.created_by_user_id_bytes,
+			user_id=ban.user_id_bytes,
+		)
 		return ban
+
+	def update_ban(self, id, **kwargs):
+		ban = Ban(id=id, **kwargs)
+		updates = {}
+		if 'creation_time' in kwargs:
+			updates['creation_time'] = int(ban.creation_time)
+		if 'remote_origin' in kwargs:
+			updates['remote_origin'] = ban.remote_origin.packed
+		if 'scope' in kwargs:
+			updates['scope'] = str(ban.scope)
+		if 'reason' in kwargs:
+			updates['reason'] = str(ban.reason)
+		if 'note' in kwargs:
+			updates['note'] = str(ban.note)
+		if 'expiration_time' in kwargs:
+			updates['expiration_time'] = int(ban.expiration_time)
+		if 'view_time' in kwargs:
+			updates['view_time'] = int(ban.view_time)
+		if 'created_by_user_id' in kwargs:
+			updates['created_by_user_id'] = ban.created_by_user_id_bytes
+		if 'user_id' in kwargs:
+			updates['user_id'] = ban.user_id_bytes
+		if 0 == len(updates):
+			return
+		self.connection.execute(
+			self.bans.update().values(**updates).where(
+				self.bans.c.id == ban.id_bytes
+			)
+		)
+
+	def delete_ban(self, id):
+		id = get_id_bytes(id)
+		self.connection.execute(
+			self.bans.delete().where(self.bans.c.id == id)
+		)
+
+	def prune_bans(self, expired_before=None):
+		if not expired_before:
+			expired_before = time.time()
+		self.connection.execute(
+			self.bans.delete().where(
+				and_(
+					0 != self.bans.c.expiration_time,
+					int(expired_before) > self.bans.c.expiration_time,
+				)
+			)
+		)
+
+	def delete_user_bans(self, user_id):
+		user_id_bytes = get_id_bytes(user_id)
+		self.connection.execute(
+			self.bans.delete().where(self.bans.c.user_id == user_id_bytes)
+		)
+
+	def anonymize_user_bans(self, user_id, new_user_id=None):
+		user_id = get_id_bytes(user_id)
+
+		if not new_user_id:
+			new_user_id = uuid.uuid4().bytes
+
+		self.connection.execute(
+			self.bans.update().values(user_id=new_user_id).where(
+				self.bans.c.user_id == user_id,
+			)
+		)
+
+	def anonymize_ban_origins(self, bans):
+		for ban in bans.values():
+			if 4 == ban.remote_origin.version:
+				# clear last 16 bits
+				anonymized_origin = ip_address(
+					int.from_bytes(ban.remote_origin.packed, 'big')
+					&~ 0xffff
+				)
+			elif 6 == ban.remote_origin.version:
+				# clear last 80 bits
+				anonymized_origin = ip_address(
+					int.from_bytes(ban.remote_origin.packed, 'big')
+					&~ 0xffffffffffffffffffff
+				)
+			else:
+				raise ValueError('Encountered unknown IP version')
+			self.connection.execute(
+				self.bans.update().values(
+					remote_origin=anonymized_origin.packed
+				).where(
+					self.bans.c.id == ban.id_bytes
+				)
+			)
