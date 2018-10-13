@@ -350,7 +350,7 @@ class Bans:
 			self.bans.delete().where(self.bans.c.user_id == user_id_bytes)
 		)
 
-	def anonymize_user_bans(self, user_id, new_user_id=None):
+	def anonymize_user(self, user_id, new_user_id=None):
 		user_id = get_id_bytes(user_id)
 
 		if not new_user_id:

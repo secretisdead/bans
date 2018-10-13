@@ -1145,14 +1145,14 @@ class TestBans(unittest.TestCase):
 		)
 
 	# anonymization
-	def test_anonymize_user_bans(self):
+	def test_anonymize_user(self):
 		user_id = base64_url_encode(uuid.uuid4().bytes)
 		ban = self.bans.create_ban(user_id=user_id)
 
 		self.assertIsNotNone(self.bans.get_ban(ban.id))
 		self.assertEqual(user_id, self.bans.get_ban(ban.id).user_id)
 
-		self.bans.anonymize_user_bans(user_id)
+		new_id_bytes = self.bans.anonymize_user(user_id)
 
 		self.assertNotEqual(user_id, self.bans.get_ban(ban.id).user_id)
 
