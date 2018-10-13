@@ -362,6 +362,8 @@ class Bans:
 			)
 		)
 
+		return new_user_id
+
 	def anonymize_ban_origins(self, bans):
 		for ban in bans.values():
 			if 4 == ban.remote_origin.version:
