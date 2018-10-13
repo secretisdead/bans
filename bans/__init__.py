@@ -11,6 +11,7 @@ from sqlalchemy.sql import func, and_, or_
 from statement_helper import sort_statement, paginate_statement, id_filter
 from statement_helper import time_filter, string_equal_filter
 from statement_helper import string_like_filter, bitwise_filter
+from statement_helper import remote_origin_filter
 from base64_url import base64_url_encode, base64_url_decode
 from idcollection import IDCollection
 from parse_id import parse_id
@@ -143,23 +144,11 @@ class Bans:
 		conditions = []
 		conditions += id_filter(filter, 'ids', self.bans.c.id)
 		conditions += time_filter(filter, 'created', self.bans.c.creation_time)
-		if 'remote_origins' in filter:
-			if list is not type(filter['remote_origins']):
-				filter['remote_origins'] = [filter['remote_origins']]
-			block_conditions = []
-			for remote_origin in filter['remote_origins']:
-				try:
-					remote_origin = ip_address(str(remote_origin))
-				except:
-					pass
-				else:
-					block_conditions.append(
-						self.bans.c.remote_origin == remote_origin.packed
-					)
-			if block_conditions:
-				conditions.append(or_(*block_conditions))
-			else:
-				conditions.append(False)
+		conditions += remote_origin_filter(
+			filter,
+			'remote_origins',
+			self.bans.c.remote_origin,
+		)
 		conditions += string_equal_filter(filter, 'scopes', self.bans.c.scope)
 		conditions += string_like_filter(filter, 'reasons', self.bans.c.reason)
 		conditions += string_like_filter(filter, 'notes', self.bans.c.note)
