@@ -1166,6 +1166,10 @@ class TestBans(unittest.TestCase):
 		)
 		self.assertNotEqual(user_id, self.bans.get_ban(ban.id).user_id)
 
+	#TODO passing in an id to use for anonymization is allowed, so test it
+	def test_anonymize_user_with_new_id(self):
+		pass
+
 	def test_anonymize_ban_origins(self):
 		origin1 = '1.2.3.4'
 		expected_anonymized_origin1 = '1.2.0.0'
