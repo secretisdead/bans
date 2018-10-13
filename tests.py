@@ -1154,6 +1154,16 @@ class TestBans(unittest.TestCase):
 
 		new_id_bytes = self.bans.anonymize_user(user_id)
 
+		self.assertEqual(0, self.bans.count_bans(filter={'user_ids': user_id}))
+
+		# assert bans still exist, but with the new user id
+		self.assertIsNotNone(
+			self.bans.search_bans(filter={'user_ids': new_id_bytes})
+		)
+		self.assertEqual(
+			1,
+			self.bans.count_bans(filter={'user_ids': new_id_bytes}),
+		)
 		self.assertNotEqual(user_id, self.bans.get_ban(ban.id).user_id)
 
 	def test_anonymize_ban_origins(self):
