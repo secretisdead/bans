@@ -280,7 +280,7 @@ class Bans:
 	def create_ban(self, **kwargs):
 		ban = Ban(**kwargs)
 		# preflight check for existing id
-		if self.get_ban(id=ban.id_bytes):
+		if self.get_ban(ban.id_bytes):
 			raise ValueError('Ban ID collision')
 		self.connection.execute(
 			self.bans.insert(),
