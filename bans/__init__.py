@@ -9,7 +9,7 @@ from sqlalchemy import Integer, String, MetaData, ForeignKey
 from sqlalchemy.sql import func, and_, or_
 
 from statement_helper import sort_statement, paginate_statement, id_filter
-from statement_helper import time_filter, string_equal_filter
+from statement_helper import time_cutoff_filter, string_equal_filter
 from statement_helper import string_like_filter, bitwise_filter
 from statement_helper import remote_origin_filter
 from base64_url import base64_url_encode, base64_url_decode
@@ -143,7 +143,7 @@ class Bans:
 	def prepare_bans_search_statement(self, filter):
 		conditions = []
 		conditions += id_filter(filter, 'ids', self.bans.c.id)
-		conditions += time_filter(filter, 'created', self.bans.c.creation_time)
+		conditions += time_cutoff_filter(filter, 'created', self.bans.c.creation_time)
 		conditions += remote_origin_filter(
 			filter,
 			'remote_origins',
@@ -152,8 +152,8 @@ class Bans:
 		conditions += string_equal_filter(filter, 'scopes', self.bans.c.scope)
 		conditions += string_like_filter(filter, 'reasons', self.bans.c.reason)
 		conditions += string_like_filter(filter, 'notes', self.bans.c.note)
-		conditions += time_filter(filter, 'expired', self.bans.c.expiration_time)
-		conditions += time_filter(filter, 'viewed', self.bans.c.view_time)
+		conditions += time_cutoff_filter(filter, 'expired', self.bans.c.expiration_time)
+		conditions += time_cutoff_filter(filter, 'viewed', self.bans.c.view_time)
 		conditions += id_filter(
 			filter,
 			'created_by_user_ids',
