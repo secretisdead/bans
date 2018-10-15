@@ -45,8 +45,10 @@ class Ban:
 		):
 		self.id, self.id_bytes = generate_or_parse_id(id)
 
+		current_time = time.time()
+
 		if None == creation_time:
-			creation_time = time.time()
+			creation_time = current_time
 		self.creation_time = int(creation_time)
 		self.creation_datetime = datetime.fromtimestamp(
 			self.creation_time,
@@ -79,6 +81,10 @@ class Ban:
 
 		self.user_id, self.user_id_bytes = parse_id(user_id)
 		self.user = None
+
+		self.expired = False
+		if self.expiration_time and self.expiration_time < current_time:
+			self.expired = True
 
 class Bans:
 	def __init__(self, engine, db_prefix='', install=False):
