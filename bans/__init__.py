@@ -72,7 +72,9 @@ class Ban:
 			timezone.utc,
 		)
 
-		self.created_by_user_id, self.created_by_user_id_bytes = parse_id(created_by_user_id)
+		self.created_by_user_id, self.created_by_user_id_bytes = parse_id(
+			created_by_user_id
+		)
 		self.created_by_user = None
 
 		self.user_id, self.user_id_bytes = parse_id(user_id)
