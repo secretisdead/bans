@@ -347,6 +347,18 @@ class Bans:
 			self.bans.delete().where(self.bans.c.user_id == user_id_bytes)
 		)
 
+	# unique scopes
+	def get_unique_scopes(self):
+		statement = self.bans.select().with_only_columns(
+			[self.bans.c.scope]
+		).group_by(self.bans.c.scope)
+		result = self.engine.execute(statement).fetchall()
+		unique_scopes = []
+		for row in result:
+			unique_scopes.append(row[self.bans.c.scope])
+		return unique_scopes
+
+	# anonymization
 	def anonymize_user(self, user_id, new_user_id=None):
 		user_id = get_id_bytes(user_id)
 
