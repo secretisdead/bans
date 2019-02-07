@@ -4,8 +4,10 @@ import re
 from ipaddress import ip_address
 from datetime import datetime, timezone
 
-from sqlalchemy import Table, Column, PrimaryKeyConstraint, LargeBinary
-from sqlalchemy import Integer, String, MetaData, ForeignKey
+from sqlalchemy import Table, Column, PrimaryKeyConstraint, Binary as sqla_binary
+from sqlalchemy import Integer, String, MetaData
+from sqlalchemy.dialects.mysql import VARBINARY as mysql_binary
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func, and_, or_
 
 from statement_helper import sort_statement, paginate_statement, id_filter
@@ -89,6 +91,7 @@ class Ban:
 class Bans:
 	def __init__(self, engine, db_prefix='', install=False):
 		self.engine = engine
+		self.engine_session = sessionmaker(bind=self.engine)()
 
 		self.db_prefix = db_prefix
 
@@ -99,22 +102,21 @@ class Bans:
 		metadata = MetaData()
 
 		default_bytes = 0b0 * 16
-		default_origin = ip_address(0b0 * 16)
+
+		if 'mysql' == self.engine_session.bind.dialect.name:
+			Binary = mysql_binary
+		else:
+			Binary = sqla_binary
 
 		# bans tables
 		self.bans = Table(
 			self.db_prefix + 'bans',
 			metadata,
-			Column(
-				'id',
-				LargeBinary(16),
-				primary_key=True,
-				default=default_bytes,
-			),
+			Column('id', Binary(16), default=default_bytes),
 			Column('creation_time', Integer, default=0),
 			Column(
 				'remote_origin',
-				LargeBinary(16),
+				Binary(16),
 				default=ip_address(default_bytes).packed,
 			),
 			Column('scope', String(self.scope_length), default=''),
@@ -122,23 +124,15 @@ class Bans:
 			Column('note', String(self.note_length), default=''),
 			Column('expiration_time', Integer, default=0),
 			Column('view_time', Integer, default=0),
-			Column('user_id', LargeBinary(16),default=default_bytes),
-			Column(
-				'created_by_user_id',
-				LargeBinary(16),
-				default=default_bytes,
-			),
+			Column('user_id', Binary(16),default=default_bytes),
+			Column('created_by_user_id', Binary(16), default=default_bytes),
+			PrimaryKeyConstraint('id'),
 		)
 
 		self.connection = self.engine.connect()
 
 		if install:
-			table_exists = self.engine.dialect.has_table(
-				self.engine,
-				self.db_prefix + 'bans'
-			)
-			if not table_exists:
-				metadata.create_all(self.engine)
+			self.bans.create(bind=self.engine, checkfirst=True)
 
 	def uninstall(self):
 		self.bans.drop(self.engine)
