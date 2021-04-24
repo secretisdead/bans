@@ -4,7 +4,7 @@ import re
 from ipaddress import ip_address
 from datetime import datetime, timezone
 
-from sqlalchemy import Table, Column, PrimaryKeyConstraint, Binary as sqla_binary
+from sqlalchemy import Table, Column, PrimaryKeyConstraint, LargeBinary as sqla_binary
 from sqlalchemy import Integer, String, MetaData
 from sqlalchemy.dialects.mysql import VARBINARY as mysql_binary
 from sqlalchemy.orm import sessionmaker
